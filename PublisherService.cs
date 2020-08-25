@@ -1,8 +1,11 @@
 ﻿using MassTransit;
 using Microsoft.Extensions.Hosting;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using RabbitMqConsistentHash.IntegrationEvents;
 
 namespace RabbitMqConsistentHash
@@ -10,42 +13,53 @@ namespace RabbitMqConsistentHash
     public class PublisherService : IHostedService
     {
         readonly IBusControl _bus;
+        private readonly Counter _counter;
+        private readonly ILogger<PublisherService> _logger;
+        private readonly int[] _quoteIds = { 123, 234, 345, 456, 567, 678, 789, 890 };
 
-        public PublisherService(IBusControl bus)
+
+        public PublisherService(IBusControl bus, Counter counter, ILogger<PublisherService> logger)
         {
             _bus = bus;
+            _counter = counter;
+            _logger = logger;
         }
 
         public async Task StartAsync(CancellationToken cancellationToken)
         {
-            await _bus.Publish(new QuoteCreated()
+            List<Task> tasks = new List<Task>();
+            for (int i = 0; i < 1000; i++)
             {
-                Id = 456
-            }, pp => pp.Headers.Set("quote-id", 456));
+                var quoteId = _quoteIds[new Random().Next(0, _quoteIds.Length - 1)];
+                tasks.Add(_bus.Publish(
+                    new QuoteCreated { Id = quoteId },
+                    ctx => ctx.Headers.Set("quote-id", ctx.Message.Id),
+                    CancellationToken.None));
+            }
 
-            await _bus.Publish(new QuoteCreated()
+            await Task.WhenAll(tasks);
+
+            await Task.Delay(5000, cancellationToken);
+
+            _logger.LogInformation("Publishing finished");
+
+            _logger.LogInformation($"Received {_counter.Result.Count} events.");
+
+            foreach (var gr in _counter.Result.GroupBy(k => k.Key).OrderBy(x => x.Key))
             {
-                Id = 555
-            }, pp => pp.Headers.Set("quote-id", 555));
+                var counters = gr
+                    .GroupBy(x => x.Value)
+                    .ToDictionary(k => k.Key, v => v.Count())
+                    .Select(x => $"{x.Key}={x.Value}");
 
-            await _bus.Publish(new QuoteCreated()
-            {
-                Id = 123
-            }, pp => pp.Headers.Set("quote-id", 123));
-
-            await _bus.Publish(new QuoteCreated()
-            {
-                Id = 1590
-            }, pp => pp.Headers.Set("quote-id", 1590));
-
-            //Console.WriteLine("Starting bus");
-            //await _bus.StartAsync(cancellationToken).ConfigureAwait(false);
+                _logger.LogInformation($"-load #{gr.Key}: {string.Join(" | ", counters)}");
+            }
         }
 
-        public async Task StopAsync(CancellationToken cancellationToken)
+        public Task StopAsync(CancellationToken cancellationToken)
         {
-            //Console.WriteLine("Stopping bus");
-            //return _bus.StopAsync(cancellationToken);
+            Console.WriteLine("Stopping bus");
+            return _bus.StopAsync(cancellationToken);
         }
     }
 }

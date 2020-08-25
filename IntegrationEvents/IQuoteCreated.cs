@@ -1,5 +1,4 @@
 ﻿using System;
-using MassTransit.Internals.Reflection;
 
 namespace RabbitMqConsistentHash.IntegrationEvents
 {
